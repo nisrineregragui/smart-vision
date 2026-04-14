@@ -3,18 +3,14 @@ import httpx
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-import torch
-import torchvision.transforms as transforms
-import timm
 from fastapi import FastAPI, UploadFile, File, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from motor.motor_asyncio import AsyncIOMotorClient
-from io import BytesIO
-from PIL import Image
 import warnings
 import auth_routes
 import chat_routes
+import model_service
 
 #load dotenv to get API keys
 load_dotenv()
@@ -178,29 +174,6 @@ async def get_news():
 
 
 
-CLASSES = ["Blast", "Brown Rust", "Healthy", "Septoria", "Yellow Rust"]
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-#preprocessing defined by context: 224x224
-#imagenet stats
-preprocess = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
-
-#load the trained model EfficientNet-B0
-model = None
-try:
-    print("Loading custom trained model using timm (efficientnet_b0)...")
-    model = timm.create_model('efficientnet_b0', num_classes=5)
-    model.load_state_dict(torch.load('best_model.pth', map_location=device, weights_only=True), strict=True)
-    model.to(device)
-    model.eval()
-    print("Model loaded successfully!")
-except Exception as e:
-    print(f"Could not load custom model weights: {e}")
-
 @app.get("/")
 def read_root():
     return {"status": "Smart Vision Backend is Online"}
@@ -209,30 +182,29 @@ def read_root():
 async def process_image(request: Request, file: UploadFile = File(...), current_user: dict = Depends(auth_routes.get_current_user)):
     try:
         image_data = await file.read()
-        image = Image.open(BytesIO(image_data)).convert('RGB')
-        tensor = preprocess(image).unsqueeze(0).to(device)
-
-        if model is None:
-            return {"error": "Model failed to load on server strictly."}
-
-        with torch.no_grad():
-            logits = model(tensor)
-            probabilities = torch.nn.functional.softmax(logits, dim=1)[0]
-            confidence, predicted_idx = torch.max(probabilities, 0)
+        
+        # Use model_service to predict
+        result = model_service.predict_image(image_data)
+        
+        pred_class = result["prediction"]
+        conf_val = result["confidence"]
+        warning = result["warning"]
             
-            pred_class = CLASSES[predicted_idx.item()]
-            conf_val = confidence.item()
+        db = request.app.state.db
+        if db is not None:
+            await db["scans"].insert_one({
+                "email": current_user["email"],
+                "prediction": pred_class,
+                "confidence": conf_val,
+                "warning": warning,
+                "created_at": datetime.utcnow()
+            })
             
-            db = request.app.state.db
-            if db is not None:
-                await db["scans"].insert_one({
-                    "email": current_user["email"],
-                    "prediction": pred_class,
-                    "confidence": conf_val,
-                    "created_at": datetime.utcnow()
-                })
-            
-            return {"prediction": pred_class, "confidence": conf_val}
+        return {
+            "prediction": pred_class,
+            "confidence": conf_val,
+            "warning": warning
+        }
 
     except Exception as e:
         return {"error": str(e), "message": "Failed to process image payload."}
