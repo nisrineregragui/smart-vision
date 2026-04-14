@@ -10,7 +10,7 @@ import * as SecureStore from 'expo-secure-store';
 export default function HomeScreen() {
   const [image, setImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ prediction: string, confidence: number } | null>(null);
+  const [result, setResult] = useState<{ prediction: string, confidence: number, warning?: boolean } | null>(null);
 
   const pickImage = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
@@ -28,7 +28,7 @@ export default function HomeScreen() {
 
   const takePhoto = async () => {
     const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
-    
+
     if (permissionResult.granted === false) {
       Alert.alert("Permission required", "You've refused to allow this app to access your camera!! Please allow camera permission in settings <3");
       return;
@@ -61,10 +61,10 @@ export default function HomeScreen() {
         const blob = await res.blob();
         formData.append('file', blob, filename);
       } else {
-        formData.append('file', { 
-          uri: Platform.OS === 'ios' ? image.replace('file://', '') : image, 
-          name: filename, 
-          type 
+        formData.append('file', {
+          uri: Platform.OS === 'ios' ? image.replace('file://', '') : image,
+          name: filename,
+          type
         } as any);
       }
 
@@ -82,7 +82,8 @@ export default function HomeScreen() {
 
       setResult({
         prediction: response.data.prediction,
-        confidence: response.data.confidence
+        confidence: response.data.confidence,
+        warning: response.data.warning
       });
     } catch (error) {
       console.error(error);
@@ -114,18 +115,25 @@ export default function HomeScreen() {
             <Text style={styles.resultConfidence}>
               {Math.round(result.confidence * 100)}% Confidence
             </Text>
+            {result.warning && (
+              <View style={styles.warningBox}>
+                <Text style={styles.warningText}>
+                  ⚠️ Low confidence. Please verify manually or take a clearer picture.
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
         <View style={styles.controls}>
           {!image || result ? (
             <View style={styles.actionRow}>
-                <TouchableOpacity style={[styles.button, styles.actionButton, styles.buttonOutline]} onPress={takePhoto}>
-                    <Text style={styles.buttonOutlineText}>Camera</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.button, styles.actionButton, styles.buttonOutline]} onPress={pickImage}>
-                    <Text style={styles.buttonOutlineText}>Gallery</Text>
-                </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, styles.actionButton, styles.buttonOutline]} onPress={takePhoto}>
+                <Text style={styles.buttonOutlineText}>Camera</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, styles.actionButton, styles.buttonOutline]} onPress={pickImage}>
+                <Text style={styles.buttonOutlineText}>Gallery</Text>
+              </TouchableOpacity>
             </View>
           ) : null}
 
@@ -256,5 +264,21 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 6,
     fontWeight: '500',
+  },
+  warningBox: {
+    marginTop: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#fff3cd',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ffe69c',
+  },
+  warningText: {
+    color: '#664d03',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 18,
   }
 });
