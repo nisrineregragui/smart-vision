@@ -2,8 +2,10 @@ import os
 import httpx
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import base64
+from openai import AsyncOpenAI
 
-from fastapi import FastAPI, UploadFile, File, Depends, Request
+from fastapi import FastAPI, UploadFile, File, Depends, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -189,6 +191,15 @@ async def process_image(request: Request, file: UploadFile = File(...), current_
         pred_class = result["prediction"]
         conf_val = result["confidence"]
         warning = result["warning"]
+        llm_verified = False
+        
+        if pred_class in ["Yellow Rust", "Blast"]:
+            return {
+                "needs_ai": True,
+                "suspected": pred_class,
+                "confidence": conf_val,
+                "warning": warning
+            }
             
         db = request.app.state.db
         if db is not None:
@@ -197,17 +208,89 @@ async def process_image(request: Request, file: UploadFile = File(...), current_
                 "prediction": pred_class,
                 "confidence": conf_val,
                 "warning": warning,
+                "llm_verified": False,
                 "created_at": datetime.utcnow()
             })
             
         return {
             "prediction": pred_class,
             "confidence": conf_val,
-            "warning": warning
+            "warning": warning,
+            "llm_verified": False
         }
 
     except Exception as e:
         return {"error": str(e), "message": "Failed to process image payload."}
+
+@app.post("/verify_ai")
+async def verify_ai(request: Request, suspected_class: str = Form(...), file: UploadFile = File(...), current_user: dict = Depends(auth_routes.get_current_user)):
+    try:
+        image_data = await file.read()
+        pred_class = suspected_class
+        conf_val = 0.85 #default fallback
+        warning = False
+        llm_verified = False
+        
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if openai_api_key:
+            try:
+                b64_img = base64.b64encode(image_data).decode('utf-8')
+                client = AsyncOpenAI(api_key=openai_api_key)
+                
+                response = await client.chat.completions.create(
+                    model="gpt-5.4-nano",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": f"You are an expert plant pathologist verifying a wheat leaf. Does it show clear visual symptoms of {suspected_class} (such as spots, lesions, discoloration), or is it 'Healthy'? Reply exactly with '{suspected_class}' if you see disease symptoms, or 'Healthy' if it appears normal."
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{b64_img}",
+                                        "detail": "low"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_completion_tokens=10,
+                    temperature=0.0
+                )
+                
+                llm_reply = response.choices[0].message.content.strip()
+                if "Healthy" in llm_reply:
+                    pred_class = "Healthy"
+                    warning = False
+                    conf_val = 0.99
+                elif suspected_class in llm_reply:
+                    pred_class = suspected_class
+                llm_verified = True
+            except Exception as e:
+                print(f"LLM Verification failed: {e}")
+                
+        db = request.app.state.db
+        if db is not None:
+            await db["scans"].insert_one({
+                "email": current_user["email"],
+                "prediction": pred_class,
+                "confidence": conf_val,
+                "warning": warning,
+                "llm_verified": llm_verified,
+                "created_at": datetime.utcnow()
+            })
+            
+        return {
+            "prediction": pred_class,
+            "confidence": conf_val,
+            "warning": warning,
+            "llm_verified": llm_verified
+        }
+    except Exception as e:
+        return {"error": str(e), "message": "Failed to verify image with AI."}
 
 @app.get("/scans/history")
 async def get_scan_history(request: Request, current_user: dict = Depends(auth_routes.get_current_user)):
