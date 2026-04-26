@@ -7,6 +7,7 @@ from openai import AsyncOpenAI
 import os
 
 from auth_routes import get_current_user
+import agents as agent_system
 
 router = APIRouter()
 
@@ -51,12 +52,18 @@ def _to_oid(id_str: str) -> ObjectId:
 #pydantic models
 class MessageCreate(BaseModel):
     content: str
+    lat: float | None = None
+    lon: float | None = None
+
+class ConversationCreate(BaseModel):
+    scan_context: str | None = None
 
 
 #endpoints
 @router.post("/conversations", status_code=201)
 async def create_conversation(
-    request: Request,
+    body: ConversationCreate = ConversationCreate(),
+    request: Request = None,
     current_user: dict = Depends(get_current_user)
 ):
     db = request.app.state.db
@@ -69,6 +76,9 @@ async def create_conversation(
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow(),
     }
+    if body.scan_context:
+        doc["scan_context"] = body.scan_context
+
     result = await db["conversations"].insert_one(doc)
     return {"id": str(result.inserted_id), "title": "New Chat"}
 
@@ -127,6 +137,7 @@ async def get_messages(
                 "role": m["role"],
                 "content": m["content"],
                 "created_at": m["created_at"].isoformat(),
+                "agent_name": m.get("agent_name"),
             }
             for m in msgs
         ]
@@ -160,39 +171,53 @@ async def send_message(
     }
     await db["messages"].insert_one(user_msg)
 
-    #build context: last 20 messages
+    #build context: last 20 messages as {role, content} list
     cursor = db["messages"].find(
         {"conversation_id": conversation_id}
     ).sort("created_at", -1).limit(20)
     recent = await cursor.to_list(length=20)
     recent.reverse()
 
-    openai_messages = [{"role": "system", "content": AGRONOMY_SYSTEM_PROMPT}]
-    for m in recent:
-        openai_messages.append({"role": m["role"], "content": m["content"]})
+    conversation_history = [
+        {"role": m["role"], "content": m["content"]} for m in recent
+    ]
 
-    #call openai gpt-5.4-mini
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+    # Scan context from conversation metadata
+    scan_context = conv.get("scan_context")
 
-    client = AsyncOpenAI(api_key=api_key)
-    try:
-        response = await client.chat.completions.create(
-            model="gpt-5.4-mini",
-            messages=openai_messages,
-            max_completion_tokens=600,
-            temperature=0.2,   #less hallucination
-        )
-        assistant_content = response.choices[0].message.content or "I don't know."
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"OpenAI error: {str(e)}")
+    # Pre-fetch scan history for the Diagnostician
+    scan_history_str = None
+    cursor_scans = db["scans"].find(
+        {"email": current_user["email"]}
+    ).sort("created_at", -1).limit(10)
+    recent_scans = await cursor_scans.to_list(length=10)
+    if recent_scans:
+        lines = []
+        for s in recent_scans:
+            ts = s["created_at"].strftime("%Y-%m-%d") if hasattr(s["created_at"], "strftime") else str(s["created_at"])[:10]
+            conf = f"{round(s.get('confidence', 0) * 100)}%"
+            ai = " (AI verified)" if s.get("llm_verified") else ""
+            lines.append(f"- {ts}: {s['prediction']} at {conf}{ai}")
+        scan_history_str = "\n".join(lines)
+
+    #expert Panel: all specialists run in parallel,synthesizer
+    assistant_content = await agent_system.run_panel(
+        user_message=body.content,
+        conversation_history=conversation_history,
+        scan_context=scan_context,
+        scan_history=scan_history_str,
+        lat=body.lat,
+        lon=body.lon,
+        db=db,
+    )
+    agent_label = "Expert Panel"
 
     #persist assistant message
     asst_result = await db["messages"].insert_one({
         "conversation_id": conversation_id,
         "role": "assistant",
         "content": assistant_content,
+        "agent_name": agent_label,
         "created_at": datetime.utcnow(),
     })
 
@@ -215,6 +240,7 @@ async def send_message(
         "id": str(asst_result.inserted_id),
         "role": "assistant",
         "content": assistant_content,
+        "agent_name": agent_label,
     }
 
 
