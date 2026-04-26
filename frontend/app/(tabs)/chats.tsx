@@ -10,17 +10,17 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
-  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from 'expo-router';
+import { useNavigation, useLocalSearchParams, useRouter } from 'expo-router';
 import { CommonActions } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import * as Location from 'expo-location';
 
 //machine ip address
-const HOST = 'http://192.168.11.142:8001';
+const HOST = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.11.121:9001';
 
 type Conversation = {
   id: string;
@@ -33,6 +33,7 @@ type Message = {
   role: 'user' | 'assistant';
   content: string;
   created_at: string;
+  agent_name?: string;
 };
 
 type ChatSummary = {
@@ -63,18 +64,36 @@ function ChatView({
   onArchive,
   readOnly = false,
   archiveMessages = [],
+  initialInput = '',
 }: {
   conversation: Conversation | ChatSummary;
   onBack: () => void;
   onArchive?: () => void;
   readOnly?: boolean;
   archiveMessages?: Message[];
+  initialInput?: string;
 }) {
   const [messages, setMessages] = useState<Message[]>(readOnly ? archiveMessages : []);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(initialInput);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(!readOnly);
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const flatListRef = useRef<FlatList>(null);
+
+  //get gps location once on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          setCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude });
+        }
+      } catch {
+        //location unavailable agents will work without it
+      }
+    })();
+  }, []);
 
   const fetchMessages = useCallback(async () => {
     if (readOnly) return;
@@ -85,12 +104,12 @@ function ChatView({
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setMessages(res.data.messages || []);
-    } catch (e) {
-      
+    } catch {
+
     } finally {
       setFetching(false);
     }
-  }, [conversation.id]);
+  }, [conversation.id, readOnly]);
 
   useEffect(() => {
     fetchMessages();
@@ -100,7 +119,7 @@ function ChatView({
     const text = input.trim();
     if (!text || loading) return;
 
-   
+
     const tempMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -115,7 +134,7 @@ function ChatView({
       const token = await SecureStore.getItemAsync('token');
       const res = await axios.post(
         `${HOST}/chat/conversations/${conversation.id}/messages`,
-        { content: text },
+        { content: text, ...(coords ? { lat: coords.lat, lon: coords.lon } : {}) },
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const assistantMsg: Message = {
@@ -123,6 +142,7 @@ function ChatView({
         role: 'assistant',
         content: res.data.content,
         created_at: new Date().toISOString(),
+        agent_name: res.data.agent_name,
       };
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (e: any) {
@@ -142,10 +162,15 @@ function ChatView({
             <Ionicons name="leaf" size={14} color="#fff" />
           </View>
         )}
-        <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
-          <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextAssistant]}>
-            {item.content}
-          </Text>
+        <View style={styles.msgColumn}>
+          <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
+            <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextAssistant]}>
+              {item.content}
+            </Text>
+          </View>
+          {!isUser && item.agent_name && (
+            <Text style={styles.agentBadge}>{item.agent_name}</Text>
+          )}
         </View>
       </View>
     );
@@ -167,17 +192,17 @@ function ChatView({
             {conversation.title}
           </Text>
           {!readOnly && onArchive ? (
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => {
                 Alert.alert(
-                  'Validate Chat', 
-                  'Finish and archive this conversation? A summary will be saved to your history', 
+                  'Validate Chat',
+                  'Finish and archive this conversation? A summary will be saved to your history',
                   [
                     { text: 'Cancel', style: 'cancel' },
                     { text: 'Validate & Archive', onPress: onArchive }
                   ]
                 );
-              }} 
+              }}
               style={styles.validateBtn}
             >
               <Ionicons name="checkmark-circle-outline" size={26} color="#2D7A4D" />
@@ -253,11 +278,15 @@ function ChatView({
 //conversations list
 export default function ChatsScreen() {
   const navigation = useNavigation();
+  const router = useRouter();
+  const params = useLocalSearchParams<{ autoStartMessage?: string; scanContext?: string }>();
+  
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [summaries, setSummaries] = useState<ChatSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeConv, setActiveConv] = useState<Conversation | null>(null);
   const [activeSummary, setActiveSummary] = useState<ChatSummary | null>(null);
+  const [prefillMsg, setPrefillMsg] = useState('');
 
   const fetchConversations = useCallback(async () => {
     try {
@@ -266,8 +295,8 @@ export default function ChatsScreen() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setConversations(res.data.conversations || []);
-    } catch (e) {
-      
+    } catch {
+
     } finally {
       setLoading(false);
     }
@@ -280,7 +309,7 @@ export default function ChatsScreen() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setSummaries(res.data.summaries || []);
-    } catch (e) {
+    } catch {
     }
   }, []);
 
@@ -289,12 +318,12 @@ export default function ChatsScreen() {
     fetchSummaries();
   }, [fetchConversations, fetchSummaries]);
 
-  const createConversation = async () => {
+  const createConversation = async (msgToPrefill?: string, scanContext?: string) => {
     try {
       const token = await SecureStore.getItemAsync('token');
       const res = await axios.post(
         `${HOST}/chat/conversations`,
-        {},
+        scanContext ? { scan_context: scanContext } : {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const newConv: Conversation = {
@@ -303,11 +332,25 @@ export default function ChatsScreen() {
         updated_at: new Date().toISOString(),
       };
       setConversations((prev) => [newConv, ...prev]);
+      if (msgToPrefill) {
+        setPrefillMsg(msgToPrefill);
+      } else {
+        setPrefillMsg('');
+      }
       setActiveConv(newConv);
     } catch {
       Alert.alert('Error', 'Could not create a new chat. Is the server running?');
     }
   };
+
+  useEffect(() => {
+    if (params?.autoStartMessage) {
+      const msg = params.autoStartMessage;
+      const ctx = params.scanContext;
+      router.setParams({ autoStartMessage: undefined, scanContext: undefined });
+      createConversation(msg, ctx);
+    }
+  }, [params?.autoStartMessage]);
 
   const deleteConversation = (conv: Conversation) => {
     Alert.alert('Hard Delete', `Permanently delete "${conv.title}"?\nIt will NOT be archived.`, [
@@ -354,15 +397,17 @@ export default function ChatsScreen() {
     );
   };
 
-  
+
   if (activeConv) {
     return (
       <ChatView
         conversation={activeConv}
+        initialInput={prefillMsg}
         onBack={() => {
           fetchConversations();
           fetchSummaries();
           setActiveConv(null);
+          setPrefillMsg('');
         }}
         onArchive={() => archiveConversation(activeConv)}
       />
@@ -389,7 +434,7 @@ export default function ChatsScreen() {
       <View style={styles.listHeader}>
         <Text style={styles.listTitle}>Chats</Text>
         <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.newChatBtn} onPress={createConversation}>
+          <TouchableOpacity style={styles.newChatBtn} onPress={() => createConversation()}>
             <Ionicons name="create-outline" size={22} color="#2D7A4D" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
@@ -435,7 +480,7 @@ export default function ChatsScreen() {
               <Ionicons name="chatbubbles-outline" size={60} color="#ddd" />
               <Text style={styles.emptyTitle}>No active chats</Text>
               <Text style={styles.emptySub}>Tap the pencil icon to start a new agronomist conversation</Text>
-              <TouchableOpacity style={styles.newChatFab} onPress={createConversation}>
+              <TouchableOpacity style={styles.newChatFab} onPress={() => createConversation()}>
                 <Text style={styles.newChatFabText}>+ New Chat</Text>
               </TouchableOpacity>
             </View>
@@ -449,8 +494,8 @@ export default function ChatsScreen() {
                   <Text style={styles.archiveTitle}>Validated Chats</Text>
                 </View>
                 {summaries.map((s) => (
-                  <TouchableOpacity 
-                    key={s.id} 
+                  <TouchableOpacity
+                    key={s.id}
                     style={styles.archiveRow}
                     onPress={() => setActiveSummary(s)}
                   >
@@ -486,7 +531,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FDFBF7',
   },
 
-  
+
   listHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -721,30 +766,49 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 18,
   },
+  msgColumn: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    maxWidth: '100%',
+  },
+  agentBadge: {
+    fontSize: 10,
+    color: '#2D7A4D',
+    fontWeight: '700',
+    marginTop: 6,
+    marginLeft: 2,
+    letterSpacing: 0.3,
+    backgroundColor: '#E8F4EC',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
   bubbleUser: {
     backgroundColor: '#2D7A4D',
     borderBottomRightRadius: 4,
   },
   bubbleAssistant: {
-    backgroundColor: '#fff',
-    borderBottomLeftRadius: 4,
+    backgroundColor: '#FFFFFF',
+    borderBottomLeftRadius: 6,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
     borderWidth: 1,
-    borderColor: '#F0EDE8',
+    borderColor: 'rgba(45, 122, 77, 0.1)',
   },
   bubbleText: {
     fontSize: 15,
-    lineHeight: 21,
+    lineHeight: 23,
+    letterSpacing: 0.1,
   },
   bubbleTextUser: {
     color: '#fff',
   },
   bubbleTextAssistant: {
-    color: '#111',
+    color: '#1a1a1a',
   },
 
   //typing indicator
