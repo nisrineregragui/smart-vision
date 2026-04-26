@@ -15,7 +15,7 @@ import axios from 'axios';
 import { PieChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
 //machine ip address
-const HOST = 'http://192.168.11.142:8001';
+const HOST = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.11.121:9001';
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type Scan = {
@@ -89,7 +89,7 @@ export default function HistoryScreen() {
     fetchHistory();
   }, [fetchHistory]);
 
- //pie chart data 
+  //pie chart data 
   const healthyCount = scans.filter((s) => s.prediction === 'Healthy').length;
   const diseasedCount = scans.length - healthyCount;
 
@@ -191,7 +191,6 @@ export default function HistoryScreen() {
             <Text style={styles.sectionTitle}>Timeline</Text>
             <View style={styles.timeline}>
               {scans.map((scan, index) => {
-                const isHealthy = scan.prediction === 'Healthy';
                 const color = DISEASE_COLORS[scan.prediction] ?? '#888';
                 const icon = (DISEASE_ICONS[scan.prediction] ?? 'help-circle') as any;
                 const isLast = index === scans.length - 1;
