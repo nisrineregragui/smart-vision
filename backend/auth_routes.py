@@ -118,12 +118,20 @@ async def register(user: UserRegister, request: Request):
 
 @router.post("/login", response_model=Token)
 async def login(user: UserLogin, request: Request):
+    print(f"Login attempt for user: {user.email}")
     db = request.app.state.db
     if db is None:
+        print("Error: DB state is None!")
         raise HTTPException(status_code=500, detail="Database connection failed")
 
     #check if the user exists
-    db_user = await db["users"].find_one({"email": user.email})
+    print("Querying database for user...")
+    try:
+        db_user = await db["users"].find_one({"email": user.email})
+        print(f"Database query complete. User found: {bool(db_user)}")
+    except Exception as e:
+        print(f"Database error during query: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     if not db_user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
