@@ -5,11 +5,9 @@ import * as SecureStore from 'expo-secure-store';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { Ionicons } from '@expo/vector-icons';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
 //tab bar layout
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
   const router = useRouter();
   const [isReady, setIsReady] = useState(false);
 //check if user is logged in
@@ -22,7 +20,7 @@ export default function TabLayout() {
         } else {
           setIsReady(true);
         }
-      } catch (err) {
+      } catch {
         router.replace('/');
       }
     }

@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-const API_URL = 'http://192.168.11.142:8001/api/auth';
+const API_URL = `${process.env.EXPO_PUBLIC_API_URL || 'http://192.168.11.121:9001'}/api/auth`;
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -21,7 +21,7 @@ export default function RegisterScreen() {
     SecureStore.getItemAsync('token').then((token) => {
       if (token) router.replace('/(tabs)');
     });
-  }, []);
+  }, [router]);
 
   const handleRegister = async () => {
     if (!name || !email || !password) {
@@ -49,7 +49,7 @@ export default function RegisterScreen() {
       setError('Password must contain at least one special character.');
       return;
     }
-    
+
     setLoading(true);
     setError('');
 
@@ -90,15 +90,15 @@ export default function RegisterScreen() {
       >
         <View style={styles.content}>
           <View style={styles.logoContainer}>
-            <Image 
-              source={require('@/assets/images/logo.jpeg')} 
+            <Image
+              source={require('@/assets/images/logo.jpeg')}
               style={styles.logo}
               contentFit="contain"
             />
           </View>
 
           <Text style={styles.title}>Join the Farm</Text>
-          <Text style={styles.funnySubtitle}>Time to get your hands dirty! Let's grow! 🥦🥕</Text>
+          <Text style={styles.funnySubtitle}>Time to get your hands dirty! Let&apos;s grow! 🥦🥕</Text>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
@@ -141,9 +141,9 @@ export default function RegisterScreen() {
               />
             </View>
 
-            <TouchableOpacity 
-              style={[styles.registerButton, loading && styles.registerButtonDisabled]} 
-              activeOpacity={0.8} 
+            <TouchableOpacity
+              style={[styles.registerButton, loading && styles.registerButtonDisabled]}
+              activeOpacity={0.8}
               onPress={handleRegister}
               disabled={loading}
             >

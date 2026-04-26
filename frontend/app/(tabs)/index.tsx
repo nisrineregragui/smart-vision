@@ -10,7 +10,7 @@ import * as SecureStore from 'expo-secure-store';
 
 export default function NewsDashboard() {
   const router = useRouter();
-  
+
   const [weatherData, setWeatherData] = useState<any>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState<string | null>(null);
@@ -41,17 +41,17 @@ export default function NewsDashboard() {
 
         let location = await Location.getCurrentPositionAsync({});
         //machine ip address
-        const host = 'http://192.168.11.142:8001';
-        
+        const host = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.11.121:9001';
+
         const response = await axios.get(`${host}/weather?lat=${location.coords.latitude}&lon=${location.coords.longitude}`);
-        
+
         if (response.data.error) {
           setWeatherError(response.data.error);
         } else {
           setWeatherData(response.data);
         }
-      } catch (error) {
-         setWeatherError('Network Error');
+      } catch {
+        setWeatherError('Network Error');
       } finally {
         setWeatherLoading(false);
       }
@@ -60,14 +60,14 @@ export default function NewsDashboard() {
     //fetch news
     (async () => {
       try {
-        const host = 'http://192.168.11.142:8001';
+        const host = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.11.121:9001';
         const response = await axios.get(`${host}/news`);
         if (response.data.error) {
           setNewsError(response.data.error);
         } else {
           setNewsData(response.data.articles || []);
         }
-      } catch (error) {
+      } catch {
         setNewsError('Network Error fetching news');
       } finally {
         setNewsLoading(false);
@@ -84,7 +84,7 @@ export default function NewsDashboard() {
       <View style={styles.aiBodyRow}>
         <View style={styles.aiTextContainer}>
           <Text style={styles.aiPromptText}>🔬 Is Your Wheat Safe? Check for Yellow Rust.</Text>
-          
+
           <TouchableOpacity style={styles.aiButton} onPress={() => router.push('/analyse')}>
             <Text style={styles.aiButtonText}>[Start a Scan 🔬]</Text>
           </TouchableOpacity>
@@ -97,7 +97,7 @@ export default function NewsDashboard() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
+
         {/* Header Segment */}
         <View style={styles.headerRow}>
           <Text style={styles.greetingText}>Good Morning, <Text style={styles.boldName}>{userName}!</Text></Text>
@@ -109,12 +109,12 @@ export default function NewsDashboard() {
         {/* Weather Widget */}
         <View style={styles.weatherCard}>
           {weatherLoading ? (
-            <View style={{height: 80, justifyContent: 'center', alignItems: 'center'}}>
-               <ActivityIndicator color="#2D7A4D" />
+            <View style={{ height: 80, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator color="#2D7A4D" />
             </View>
           ) : weatherError ? (
-            <View style={{height: 80, justifyContent: 'center', alignItems: 'center'}}>
-               <Text style={{color: '#888'}}>{weatherError}</Text>
+            <View style={{ height: 80, justifyContent: 'center', alignItems: 'center' }}>
+              <Text style={{ color: '#888' }}>{weatherError}</Text>
             </View>
           ) : (
             <>
@@ -123,10 +123,10 @@ export default function NewsDashboard() {
               </View>
               <View style={styles.weatherBottom}>
                 {weatherData.forecasts.map((dayObj: any, index: number) => (
-                    <View key={index} style={styles.weatherDay}>
-                       <Text style={styles.weatherDayText}>{dayObj.day} {dayObj.emoji}</Text>
-                       <Text style={styles.weatherTempText}>{dayObj.temp}</Text>
-                    </View>
+                  <View key={index} style={styles.weatherDay}>
+                    <Text style={styles.weatherDayText}>{dayObj.day} {dayObj.emoji}</Text>
+                    <Text style={styles.weatherTempText}>{dayObj.temp}</Text>
+                  </View>
                 ))}
               </View>
             </>
@@ -137,12 +137,12 @@ export default function NewsDashboard() {
         {/* News Section */}
         {newsLoading ? (
           <>
-            <ActivityIndicator style={{marginVertical: 20}} color="#2D7A4D" />
+            <ActivityIndicator style={{ marginVertical: 20 }} color="#2D7A4D" />
             {renderAIInsightCard()}
           </>
         ) : newsError ? (
           <>
-            <Text style={{textAlign: 'center', color: '#888', marginVertical: 20}}>{newsError}</Text>
+            <Text style={{ textAlign: 'center', color: '#888', marginVertical: 20 }}>{newsError}</Text>
             {renderAIInsightCard()}
           </>
         ) : newsData.length > 0 ? (
@@ -155,7 +155,7 @@ export default function NewsDashboard() {
               </View>
             </TouchableOpacity>
 
-           
+
             {newsData.slice(1, 3).map((news, index) => (
               <TouchableOpacity key={index} activeOpacity={0.8} style={styles.newsCard} onPress={() => news.url && Linking.openURL(news.url)}>
                 <Image source={{ uri: news.image || 'https://via.placeholder.com/80' }} style={styles.newsThumbnail} contentFit="cover" />
@@ -184,7 +184,7 @@ export default function NewsDashboard() {
           </>
         ) : (
           <>
-            <Text style={{textAlign: 'center', marginVertical: 20}}>No news available.</Text>
+            <Text style={{ textAlign: 'center', marginVertical: 20 }}>No news available.</Text>
             {renderAIInsightCard()}
           </>
         )}
@@ -325,7 +325,7 @@ const styles = StyleSheet.create({
     right: 0,
     padding: 16,
     paddingTop: 40,
-    backgroundColor: 'rgba(0,0,0,0.4)', 
+    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   heroText: {
     color: '#fff',
